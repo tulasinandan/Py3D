@@ -13,7 +13,6 @@ import numpy as np
 import struct
 import glob
 import pdb
-import warnings
 from scipy.io.idl import readsav
 from scipy.ndimage import gaussian_filter
 
@@ -129,113 +128,7 @@ class VDist(object):
     def _get_gamma(self, v1, v2, v3, v_light):
         v2 = v1**2 + v2**2 + v3**2
         c2 = v_light**2
-
-
-    def spec1d(self,
-               pts,
-               dir,
-               pa,
-               dpa,
-               mass,
-               v0_frame=False,
-               v_light=None,
-               **kwargs):
-        """ core program for calculating the energy spectrum along a direction"""
-        nvar = 'xyz'.find(dir)
-        bins = kwargs.get('bins',10)
-        rng = kwargs.get('range',
-                         3*[[pts[dir].min(),
-                         pts[dir].max()]])[nvar]
-
-        
-        v0 = 1.*pts['v0']
-        v1 = 1.*pts['v1']
-        v2 = 1.*pts['v2']
-        
-        if v0_frame:
-            print 'Warning this might be very slow, but we programed it qucikly!!!'
-            if type(bins) is int:
-                trng = np.linspace(rng[0],rng[1],bins+1)
-            else:
-                trng = bins[0]
-            bflow = [[],[],[]]
-            for c in range(len(trng)-1):
-                tind = (pts[dir] > trng[c]) & (pts[dir] <= trng[c+1])
-                bflow[0].append(np.mean(v0[tind]))
-                bflow[1].append(np.mean(v1[tind]))
-                bflow[2].append(np.mean(v2[tind]))
-
-                #v0[tind] = v0[tind] - np.mean(v0[tind])
-                #v1[tind] = v1[tind] - np.mean(v1[tind])
-                #v2[tind] = v2[tind] - np.mean(v2[tind])
-                
-                v0[tind] = v0[tind] - bflow[0][c] 
-                v1[tind] = v1[tind] - bflow[1][c] 
-                v2[tind] = v2[tind] - bflow[2][c] 
-
-        if v_light is not None:
-            raise NotImplementedError()
-            gamma = self._get_gamma(pts['vx'], pts['vy'], pts['vz'], v_light)
-            c2 = v_light**2
-
-            KE = mass*c2*(gamma - 1.)
-        else:
-            KE = .5*mass*(v0**2 + v1**2 + v2**2)
-
-        # Note: Does pitch angle change in special relativity? 
-        #       This might be pretty wrong. Maybe ask someone?
-        pitch_angle = -1.0*(np.arctan(v0/np.sqrt(v1**2 + \
-            v2**2))/np.pi*180. - 90.)
-
-        dpmin = pa - dpa/2.
-        dpmax = pa + dpa/2.
-        dpmin = dpmin if dpmin >= 0. else 0.
-        dpmax = dpmax if dpmax <= 180. else 180.
-
-        ind = np.where((pitch_angle >= dpmin) & (pitch_angle <= dpmax))
-
-        H, x_edge, y_edge = np.histogram2d(pts[dir][ind],
-                                           KE[ind],
-                                           normed=True,
-                                           **kwargs)
-
-        ind_parts = (pts[dir][ind] > x_edge[0]) & \
-                    (pts[dir][ind] < x_edge[-1]) & \
-                    (KE[ind] > y_edge[0]) & \
-                    (KE[ind] < y_edge[-1])
-        
-        nparts = 1.*np.sum(ind_parts)
-
-
-        eng = (y_edge[:-1] + y_edge[1:])/2.
-
-        if v_light is not None:
-# I stole this from EFlux code, I dont remeber why we do this
-# so you know, use at your own risk
-            warn_msg = 'Relativistic energy code implemented without '+\
-                       'though: Use with caution!!!'
-            warnings.warn(msg)
-            Ebar = eng/mass/v_light**2
-            rel_vel = np.sqrt((Ebar**2 + 2.*Ebar)/(Ebar**2 + 2.*Ebar + 1.))
-            rel_vel = rel_vel*v_light
-            H = (H*eng*rel_vel).T
-
-        else:
-            angle_norm = np.cos(dpmin/180.*np.pi) + \
-                        -np.cos(dpmax/180.*np.pi)
-            print 'yes norm'
-            H = (H*eng**2/np.sqrt(eng)).T
-            H = H/angle_norm*nparts
-            #H = H/angle_norm
-            #H = H/angle_norm*nparts
-
-            #print 'No angle norm'
-            #H = (H*eng**2/np.sqrt(eng)).T
-                
-        print 20*(str(angle_norm) + ' ')
-        print 
-        return H, x_edge, y_edge
-
+        return 1./np.sqrt(1. - v2/c2)
         
 
     def eflux(self, v1, v2, v3, mass, v_light=None, **kwargs):
@@ -344,8 +237,8 @@ class VDist(object):
         
         self.normie=norm
 
-        print 'norm = ',norm
-        print 'otha = ',abs(1./np.tan((pa-dpa/2.)/180.*np.pi) - 1./np.tan((pa+dpa/2.)/180.*np.pi))
+        print('norm = ',norm)
+        print('otha = ',abs(1./np.tan((pa-dpa/2.)/180.*np.pi) - 1./np.tan((pa+dpa/2.)/180.*np.pi)))
 
         #return intcone/norm#*abs(1./np.tan((pa-dpa/2.)/180.*np.pi) - 1./np.tan((pa+dpa/2.)/180.*np.pi))
         return intcone/intcone.min()#*abs(1./np.tan((pa-dpa/2.)/180.*np.pi) - 1./np.tan((pa+dpa/2.)/180.*np.pi))

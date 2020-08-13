@@ -10,74 +10,54 @@ class Movie(object):
 
     def __init__(self,
                  num=None,
-                 param_file=None,
+                 param=None,
                  path='./'):
         """ Initlize a movie object
         """
-        self._name_sty  = 'movie.{0}.{1}'
+        print(path)
+        print(param)
+        self._name_sty  = '/movie.{0}.{1}'
         self.path       = self._get_movie_path(path)
-        self.param      = load_param(param_file, path=self.path)
+        if param is not None: param = self.path + '/' + param
+        print(param)
+        self.param      = load_param(param)
         self.num        = self._get_movie_num(num)
         self.movie_vars = self._get_movie_vars()
         self.log        = self._load_log()
-        self.ntimes     = self._get_ntimes()
+        self.ntimes     = len(self.log[self.movie_vars[0]])
 
 
-    def get_fields(self, mvars, time=None, slc=None):
+    def get_fields(self, vars, time=None):
         """ Loads the field(s) var at for a given time(s)
 
-            :param var: A space seperated list of the varibles to load
-            :type var: string
-                a single string field name
-                a list of string field names
+            var can be:
+                a string field name
+                a sequence of string field names
                 or simply 'all'
-
-            time (int, None) :: what time you want to read, if None it will ask
-
-            slc (None, tuple(0-2, int)) :: if you want to load only a slice
-                of a 3D movie file (to save time?) the first int it what plane
-                that you dont want, and the second is the off set
         """
 
-        if 'all' in mvars:
-            mvars = tuple(self.movie_vars) 
-        elif type(mvars) is str:
-            mvars = mvars.split()
-        
-        def time_not_in_file(t):
-            try:
-                time_in_file = set(t) <= set(range(self.ntimes))
-            except TypeError:
-                time_in_file = t in range(self.ntimes)
-            return not time_in_file
-        
-        while  slc is None and time_not_in_file(time):
-            if time is None:
-                msg = "Enter time between 0-{0}: ".format(self.ntimes-1)
-            else:
-                msg = "Time {0} not in time range. Enter time between 0-{1}: "
-                msg = msg.format(time,self.ntimes-1)
-
-            time = int(raw_input(msg))
+        if 'all' in vars:
+            vars = tuple(self.movie_vars)
+        elif type(vars) is str:
+            vars = [vars]
 
         flds = {} 
-        for v in mvars:
+        for v in vars:
             if v not in self.movie_vars:
                 err_msg = 'var {0} not found in posible field values.\n{1}'
                 err_msg = err_msg.format(v,self.movie_vars)
                 raise KeyError(err_msg)
 
-            flds[v] = self._read_movie(v,time,slc)
+            flds[v] = self._read_movie(v,time)
         
         
-        xyz_vecs = self._get_xyz_vectors(time, slc)
+        xyz_vecs = self._get_xy_vectors()
         for k in xyz_vecs:
             flds[k] = xyz_vecs[k]
 
         return flds
 
-
-    def _get_xyz_vectors(self, time, slc):
+    def _get_xy_vectors(self):
         xyz_vecs = {}
 
         dx = self.param['lx']/(self.param['pex']*self.param['nx'])
@@ -86,21 +66,9 @@ class Movie(object):
         dy = self.param['ly']/(self.param['pey']*self.param['ny'])
         xyz_vecs['yy'] = np.arange(dy/2.,self.param['ly'],dy)
 
-        #if self.param['pez']*self.param['nz'] > 1:
-        dz = self.param['lz']/(self.param['pez']*self.param['nz'])
-        xyz_vecs['zz'] = np.arange(dz/2.,self.param['lz'],dz)
-
-        try:
-            dt = self.param['n_movieout']*self.param['dt']
-        except KeyError:
-            dt = self.param['movieout']
-        xyz_vecs['tt'] = dt*np.arange(self.ntimes)
-        
-        if slc is not None:
-            for s,vv in zip(slc, 'tt zz yy xx'.split()):
-                xyz_vecs[vv] = xyz_vecs[vv][s]
-        else:
-            xyz_vecs['tt'] = dt*np.arange(time)
+        if self.param['pez']*self.param['nz'] > 1:
+            dz = self.param['lz']/(self.param['pez']*self.param['nz'])
+            xyz_vecs['zz'] = np.arange(dz/2.,self.param['lz'],dz)
 
         return xyz_vecs
 #        if type(var) is not list:
@@ -142,7 +110,7 @@ class Movie(object):
 #            fname = self.movie_path+'/movie.'+cosa+'.'+self.movie_num_str
 #            fname = os.path.abspath(fname)
 
-    def _read_movie(self, var, time, slc):
+    def _read_movie(self,var, time):
         
         # Insert Comment about werid movie shape
         movie_shape = (self.ntimes,
@@ -151,88 +119,52 @@ class Movie(object):
                        self.param['pex']*self.param['nx'])
         
 
-        fname = os.path.join(self.path,  self._name_sty.format(var,self.num))
-        print "Loading {0}".format(fname)
+        fname = self.path + self._name_sty.format(var,self.num)
+        print("Loading {0}".format(fname))
 
         # It seems that Marc Swisdak hates us and wants to be unhappy because 
         # the byte data is unsigned and the doulbe byte is signed so that is 
         # why one has a uint and the other is just int
-        if 'four_byte' in self.param:
-            dat_type = np.dtype('float32')
-            byte_2_real = lambda m : m
+        if 'double_byte' in self.param:
+            dat_type = np.dtype('int16')
+            norm = 256**2-1
+            shft = 1.0*256**2/2
+        else: #single byte precision
+            dat_type = np.dtype('uint8')
+            norm = 256-1
+            shft = 0.0
 
-        else:
-            if 'double_byte' in self.param:
-                dat_type = np.dtype('int16')
-                norm = 256**2-1
-                shft = 1.0*256**2/2
-
-            else: #single byte precision
-                dat_type = np.dtype('uint8')
-                norm = 256-1
-                shft = 0.0
-
-            if type(slc) is tuple and len(slc) > 2:
-                time = slc[0]
-
-            cmin = self.log[var][:,0][time]
-            cmax = self.log[var][:,1][time]
-            
-            byte_2_real = lambda m : (1.*m.T + shft)*\
-                                     (cmax - cmin)/(1.0*norm) + cmin 
-
+        t = 0 # This keeps track of where we are
+        cmin = self.log[var][:,0][time]
+        cmax = self.log[var][:,1][time]
 
         mov = np.memmap(fname, dtype=dat_type, mode='r', shape=movie_shape)
-        if slc is None:
-            mov = mov[time]
-            mov = mov.view(np.ndarray)
-        elif type(slc) is tuple:
-        # Colby: I know this is backwards, its how it get loaded
-            if len(slc) == 2:
-                if slc[0] == 0:
-                    slc = np.s_[:,:,slc[1]]
-                elif slc[0] == 1:
-                    slc = np.s_[:,slc[1],:]
-                elif slc[0] == 2:
-                    slc = np.s_[slc[1],:,:]
-                
-                mov = mov[time]
-                mov = mov[slc].view(np.ndarray)
-            else:
-                #raise NotImplementedError()
-                mov = mov[slc].view(np.ndarray)
 
-
-        mov = byte_2_real(mov)
-        #mov =  (1.*mov.T + shft)*(cmax - cmin)/(1.0*norm) + cmin 
+        mov = mov[time].view(np.ndarray)
+        mov = (1.*mov.T + shft)*(cmax - cmin)/(1.0*norm) + cmin 
         mov = np.squeeze(mov)
         return mov
 
 
     def _load_log(self):
-        """ Loads the log file for a given set of movies files
-            It creates a dictionary
+        """ Loads the log file for a given set of moives files
+            It creates a dictoary 
         """
 
-        fname = os.path.join(self.path, self._name_sty.format('log', self.num))
+        fname = self.path + self._name_sty.format('log', self.num)
 
-        if 'four_byte' in self.param:
-            print 'Four Byte data, no log file to load.'
-            return None
-
-        else:
-            print "Loading {0}".format(fname)
-            clims = np.loadtxt(fname)
+        print("Loading {0}".format(fname))
+        clims = np.loadtxt(fname)
         
-            if len(clims)%len(self.movie_vars) != 0:
-                raise Exception('Param/Moive Incompatibility')
+        if len(clims)%len(self.movie_vars) != 0:
+            raise Exception('Param/Moive Incompatibility')
 
-            log = {}
-            num_of_vars = len(self.movie_vars)
-            for c,k in enumerate(self.movie_vars):
-                log[k] = clims[c::num_of_vars,:]
-        
-            return log
+        log = {}
+        num_of_vars = len(self.movie_vars)
+        for c,k in enumerate(self.movie_vars):
+            log[k] = clims[c::num_of_vars,:]
+    
+        return log
         # usefull use later
         #print "movie.log '%s' has %i time slices"%(fname,self.num_of_times)
 
@@ -242,44 +174,18 @@ class Movie(object):
 #   in the array each element coresponds to a diffrent time slice
 #   so      movie.movie_log_dict['bz'] = [
 
-    def _get_ntimes(self):
-        ntimes = None
-        if self.log is not None:
-            ntimes = len(self.log[self.movie_vars[0]])
-            return ntimes
-
-        else:
-            ngrids = self.param['nx']*self.param['pex']*\
-                     self.param['ny']*self.param['pey']*\
-                     self.param['nz']*self.param['pez']
-            for v in self.movie_vars:
-                try:
-                    fname = os.path.join(self.path, 
-                                         self._name_sty.format(v, self.num))
-                    ntimes = os.path.getsize(fname)/4/ngrids
-                    return ntimes
-                except OSError:
-                    pass
-
-            raise ShouldNotGetHereError()
-
-
 
     def _get_movie_path(self,path):
 
         attempt_tol = 5
         path = os.path.abspath(path)
-        #choices = glob.glob(path + self._name_sty.format('log', '*'))
-        choices = glob.glob(os.path.join(path, 
-                  self._name_sty.format('log', '*')))
+        choices = glob.glob(path + self._name_sty.format('log', '*'))
 
         c = 0
         while not choices and c < attempt_tol:
-            print '='*20 + ' No movie files found ' + '='*20
-            path = os.path.abspath(raw_input('Please Enter Path: '))
-            choices = glob.glob(os.path.join(path, 
-                      self._name_sty.format('log', '*')))
-            c += 1
+            print('='*20 + ' No movie files found ' + '='*20)
+            path = os.path.abspath(input('Please Enter Path: '))
+            c =+ 1
 
         assert choices, 'No movie log files found!' 
 
@@ -288,16 +194,15 @@ class Movie(object):
 
     def _get_movie_num(self,num):
 
-        choices = glob.glob(os.path.join(self.path, 
-                                         self._name_sty.format('log', '*')))
+        choices = glob.glob(self.path + self._name_sty.format('log', '*'))
         choices = [k[-3:] for k in choices]
 
         num = _num_to_ext(num)
 
         if num not in choices:
-            _ =  'Select from the following possible movie numbers: '\
-                 '\n{0} '.format([int(c) for c in choices])
-            num = int(raw_input(_))
+            _ =  'Select from the following possible moive numbers:'\
+                 '\n{0}'.format(choices)
+            num = int(input(_))
  
         return _num_to_ext(num)
 
@@ -306,7 +211,7 @@ class Movie(object):
         #NOTE: The movie_vars are in an order, please do not switch around 
         #      unless you want incidious bugs
 
-        #Check the movie header type
+        #Check the moive header type
         if self.param['movie_header'] == '"movie2dC.h"':
             return ['rho',
                     'jx','jy','jz',
@@ -368,12 +273,12 @@ class Movie(object):
  
         else:
             err_msg = '='*80 + \
-                      '\t This particular movie headder has not been coded!\n'\
+                      '\t This particular moive headder has not been coded!\n'\
                       '\tTalk to Colby to fit it, or fix it yourself.\n'\
                       '\tI dont care, Im a computer not a cop'\
                       '='*80
 
-            print err_msg
+            print(err_msg)
             raise NotImplementedError()
 
 ################################################################################
@@ -411,14 +316,33 @@ class Movie(object):
 class UnfinishedMovie(Movie):
     """Class to load p3d movie data"""
 
-    def __init__(self, param=None, path='./'):
+    def __init__(self, param=None):
         """ Initlize a movie object
         """
-        self._name_sty  = '{0}'
-        self.path       = path
-        self.param      = load_param(param,path=path)
+        self._name_sty  = '/{0}'
+        self.path       = './'
+        self.param      = load_param(param)
         self.num        = '999'
         self.movie_vars = self._get_movie_vars()
         self.log        = self._load_log()
-        self.ntimes     = self._get_ntimes()
+        self.ntimes     = len(self.log[self.movie_vars[0]])
 
+
+def load_movie(vars=None, time=None, movie_num=None):
+    param = glob.glob('./param*')
+
+    M = Movie(param=param, num=movie_num)
+
+    if time is None:
+        get_time_msg = 'There are {0} times in movie number {1}. \n' +\
+                       'Please enter the time: '
+
+        get_time_msg = get_time_msg.format(M.ntimes, M.num)
+
+        time = -1 
+        attempt_tol = 5
+        ctr = 0
+        while time not in list(range(M.ntimes)) and ctr < attempt_tol:
+            time = input(get_time_msg)
+            ctr =+ 1
+    #return 

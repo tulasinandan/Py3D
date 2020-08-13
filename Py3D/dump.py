@@ -13,8 +13,8 @@ import time
 import glob
 import struct
 import numpy as np
-from _methods import load_param
-from _methods import _num_to_ext
+from ._methods import load_param
+from ._methods import _num_to_ext
 
 # Change foo.has_key(bar) to bar in foo 
 class Dump(object):
@@ -38,12 +38,11 @@ class Dump(object):
         """
 
         self._set_dump_path(path)
-        self.param = load_param(param_file, path)
+        self.param = load_param(param_file)
         self.set_dump_num(num)
         self._set_part_dtype()
         self._tags = False
-        self._endian = '<' # I dont think we need this
-        if self.param.has_key('mult_species'):
+        if 'mult_species' in self.param:
             self.is_mult_species = True
             raise NotImplementedError()
         else: 
@@ -52,16 +51,16 @@ class Dump(object):
 
     def set_dump_num(self,num):
 
-        choices = glob.glob(os.path.join(self.path, '/p3d-001.*'))
+        choices = glob.glob(self.path+'/p3d-001.*')
         choices = [k[-3:] for k in choices]
 
         num = _num_to_ext(num)
 
         if num not in choices:
             
-            _ =  'Select from the following possible dump file numbers:' \
+            _ =  'Select from the following possible moive numbers:' \
                  '\n{0} '.format(choices)
-            num = int(raw_input(_))
+            num = int(input(_))
  
         self.num = _num_to_ext(num)
 
@@ -89,20 +88,14 @@ class Dump(object):
         parts = self._pop_particles(F,wanted_procs)
 
         if F.read():
-            print 'ERROR: The entire dump file was not read.\n'\
-                  '       Returning what was read.'
+            print('ERROR: The entire dump file was not read.\n'\
+                  '       Returning what was read.')
         F.close()
 
         return parts
 
 
-    def read_fields(self, index=None):
-        if index is None:
-            return self._read_fields_all()
-        else:
-            return self._read_fields_index(index)
-
-    def _read_fields_all(self):
+    def read_fields(self):
 
         flds = []
 
@@ -112,111 +105,28 @@ class Dump(object):
             flds += [self._pop_fields(F)]
             F.close()
 
-        
-
-        if len(np.shape(flds[0]['bx'])) < 3:
-            def extra_dim(d):
-                g = {}
-                for k in d:
-                    g[k] = d[k].reshape(np.shape(d[k]) + (1,))
-                return g
-        else:
-            def extra_dim(d):
-                return d
-
-        fields = extra_dim(flds[0])
+        fields = flds[0]
         for f in flds[1:]:
-            f = extra_dim(f)
             for k in fields:
                 fields[k] = np.concatenate((fields[k],f[k]),axis=2)
 
-        for k,v in self._get_xyz_vectors().iteritems():
-            fields[k] = v
-
-        for k in fields:
-            fields[k] = np.squeeze(fields[k])
-
         return fields
 
-
-    def _read_fields_index(self, index):
-        """ A chunk of code that only read part of the field data
-            This is to seepd up the distro code
-        """
-
-        if type(index) is int:
-            index = (index,)
-
-        for ind in index:
-            ind = _num_to_ext(ind)
-            if ind not in self._dump_files_with_fields():
-                msg = "Dumpfile p3d-{}.{} does not contain field data!"
-                raise Exception(msg.format(ind, self.num))
-
-        flds = []
-        for ind in tuple(index): #This might make things run faster
-            ind = _num_to_ext(ind)
-            print 'Loading p3d-{}.{}'.format(ind, self.num)
-            F = self._open_dump_file(ind)
-            self._read_header(F)
-            flds += [self._pop_fields(F)]
-            F.close()
-        
-
-        if len(np.shape(flds[0]['bx'])) < 3:
-            def extra_dim(d):
-                g = {}
-                for k in d:
-                    g[k] = d[k].reshape(np.shape(d[k]) + (1,))
-                return g
-        else:
-            def extra_dim(d):
-                return d
-
-        fields = extra_dim(flds[0])
-        for f in flds[1:]:
-            f = extra_dim(f)
-            for k in fields:
-                fields[k] = np.concatenate((fields[k],f[k]),axis=2)
-
-        for k,v in self._get_xyz_vectors().iteritems():
-            fields[k] = v
-
-        for k in fields:
-            fields[k] = np.squeeze(fields[k])
-
-        return fields
-
-    def _get_xyz_vectors(self):
-        xyz_vecs = {}
-
-        dx = self.param['lx']/(self.param['pex']*self.param['nx'])
-        xyz_vecs['xx'] = np.arange(dx/2.,self.param['lx'],dx)
-
-        dy = self.param['ly']/(self.param['pey']*self.param['ny'])
-        xyz_vecs['yy'] = np.arange(dy/2.,self.param['ly'],dy)
-
-        if self.param['pez']*self.param['nz'] > 1:
-            dz = self.param['lz']/(self.param['pez']*self.param['nz'])
-            xyz_vecs['zz'] = np.arange(dz/2.,self.param['lz'],dz)
-
-        return xyz_vecs
 
     def _set_dump_path(self, path):
         def get_choices(path):
-            choices = glob.glob(os.join(path, '/p3d-001.*'))
+            choices = glob.glob(path+'/p3d-001.*')
             choices = [k[-3:] for k in choices]
             return choices
 
         attempt_tol = 5
         path = os.path.abspath(path)
         choices =  get_choices(path)
-        print path
 
         c = 0
         while not choices and c < attempt_tol:
-            print '='*20 + ' No dump files found ' + '='*20
-            path = os.path.abspath(raw_input('Please Enter Path: '))
+            print('='*20 + ' No dump files found ' + '='*20)
+            path = os.path.abspath(input('Please Enter Path: '))
             choices =  get_choices(path)
             c =+ 1
 
@@ -229,13 +139,13 @@ class Dump(object):
 
     def _open_dump_file(self,index):
 
-        fname = os.path.join(self.path, '/p3d-{0}.{1}'.format(index,self.num))
+        fname = self.path + '/p3d-{0}.{1}'.format(index,self.num)
 
         try:
             F = open(fname, "rb")
         except IOError as e:
-            print "I/O error({0}): {1}".format(e.errno, e.strerror)
-            print "ERROR: Could not open file. " + fname
+            print("I/O error({0}): {1}".format(e.errno, e.strerror))
+            print("ERROR: Could not open file. " + fname)
 
         return F
 
@@ -246,7 +156,7 @@ class Dump(object):
         elif self.param['prk'] == 8:
             ntype = 'float64'
         else:
-            print 'prk number {0} not understood!'.format(self.param['prk'])
+            print('prk number {0} not understood!'.format(self.param['prk']))
             raise Exception("Unknown Param Entry")
 
         self._part_dtype = np.dtype([('x' , ntype), 
@@ -255,9 +165,6 @@ class Dump(object):
                                      ('vx', ntype),
                                      ('vy', ntype),
                                      ('vz', ntype)])
-
-    def _get_tagpart_dtype(self):
-        return np.dtype(self._part_dtype.descr + [('tag', self._endian+'i8')])
 
 
     def _pop_fields(self,F):
@@ -290,7 +197,7 @@ class Dump(object):
                 for py in range(self.py):
                     pad = self._pop_int(F)
                     fdict[fld].append(np.fromfile(F, dtype=dtype,
-                                                  count=pad/dtype_size))
+                                                  count=int(pad/dtype_size)))
                     self._pop_int(F)
                     #pdb.set_trace()
 
@@ -316,7 +223,7 @@ class Dump(object):
 
             files_with_fields.append(_num_to_ext(ch+1))
 
-        return tuple(files_with_fields)
+        return files_with_fields
 
 
     def _pop_particles(self, F, wanted_procs=None):
@@ -331,14 +238,12 @@ class Dump(object):
         if self.param['pex']*self.param['pey']*\
             self.param['pez']%self.nchannels != 0:
             raise NotImplementedError()
-        else:
-            nprocs = self.param['pex']*self.param['pey']*\
-                     self.param['pez']/self.nchannels
 
-        # If no processosors are spesified, the defual is to return everything
-        # on the dump file, i.e. a list from 0 to the number of procs (nprocs)
+        nprocs = int(self.param['pex']*self.param['pey']*\
+                 self.param['pez']/self.nchannels)
+                 
         if wanted_procs is None:
-            wanted_procs = range(nprocs)
+            wanted_procs = list(range(nprocs))
 
         pes = {} 
         for sp in self.species: 
@@ -351,9 +256,9 @@ class Dump(object):
             for n in range(nprocs):
 
                 if n in wanted_procs:
-                    pes[sp].append(self._pop_parts_off_grid(F))
+                    pes[sp].append( self._pop_parts_off_grid(F) )
                 else:
-                    pes[sp].append(self._skip_parts(F))
+                    pes[sp].append( self._skip_parts(F) )
                 
                 # Debuging code that says whwere we are physicaly
                 #if sp == 'i':
@@ -379,7 +284,7 @@ class Dump(object):
             # Special case: the number of parts is evenly divisalbe by 
             # bufsize. so we will return the entire last buffer
             num_parts_last_buf = self.bufsize
-            print 'It is pretty unlikly that we will be here!'
+            print('It is pretty unlikly that we will be here!')
 
         # Explination of skip size:
         #   x,y,z,vx,vy,vz *prk* particles on a buffer 
@@ -417,7 +322,7 @@ class Dump(object):
 
             # First we have to read the particle locations and velocties
             # Each particle takes up prk bytes x 6 for (x,y,z,vx,vy,vz)
-            parts_on_buf = pad/(self.param['prk']*6)
+            parts_on_buf = int(pad/(self.param['prk']*6))
 
             parts.append( np.fromfile(F, dtype=self._part_dtype, 
                                          count=parts_on_buf))
@@ -427,7 +332,7 @@ class Dump(object):
             # Now we need to take care of the tags (if they are there)
             pad = self._pop_int(F)
             if self._tags:
-                tags.append(np.fromfile(F, dtype=self._endian+'i8', 
+                tags.append(np.fromfile(F, dtype='int64', 
                                         count=parts_on_buf))
             else:
                 F.seek(pad,1)
@@ -437,12 +342,9 @@ class Dump(object):
         parts[-1] = parts[-1][:num_parts_last_buf]
 
         if self._tags: 
-            #pdb.set_trace()
             tags[-1] = tags[-1][:num_parts_last_buf]
-            tagparts = np.concatenate(parts).astype(self._get_tagpart_dtype())
-            tagparts['tag'] = np.concatenate(tags)
-            return tagparts
-
+            return np.concatenate(parts), \
+                   np.concatenate(tags)
         else:
             return np.concatenate(parts)
 
@@ -493,15 +395,15 @@ class Dump(object):
 
     def _r0_on_dump_consistency_check(self,r0):
 
-        print 'x = {0}, y = {1},  z = {2} '.format(*r0)
+        print('x = {0}, y = {1},  z = {2} '.format(*r0))
 
         p0 = self._location_to_proc(*r0)
 
-        print 'px = {0}, py = {1},  pz = {2} '.format(*p0)
+        print('px = {0}, py = {1},  pz = {2} '.format(*p0))
 
         N,R = self._proc_to_dumpindex(*p0)
 
-        print 'N = {0}, R = {1}'.format(N,R)
+        print('N = {0}, R = {1}'.format(N,R))
 
         try:
             foo = self.read_particles(N)[1]['i'][R]

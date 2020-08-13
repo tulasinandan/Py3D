@@ -1,7 +1,7 @@
 import os
 import numpy as np
 
-def load_param(param_file=None, path=''):
+def load_param(param_file=None):
     """ Method to load in the param file for a given run
         It will try and then ask for where the file is. if it doent know
     """
@@ -10,9 +10,7 @@ def load_param(param_file=None, path=''):
     param = {'file': param_file}
 
     if param['file'] is None:
-        param['file'] = _get_param_file(path)
-    else:
-        param['file'] = os.path.join(path, param['file'])
+        param['file'] = _get_param_file()
 
     fname = os.path.abspath(os.path.expandvars(param['file']))
 
@@ -36,30 +34,23 @@ def load_param(param_file=None, path=''):
 #           can run through the param dictionary and replace any value
 #           with the coresponding key
     
-    for key,val in param.iteritems():
-        if param.has_key(val):
+    for key,val in param.items():
+        if val in param:
             param[key] = param[val]
 
     return param
 
 
-def _get_param_file(path=''):
-    fname = raw_input('Please param file: ')
-    fname = os.path.join(path, fname.strip())
+def _get_param_file():
+    fname = input('Please Param File: ')
     fname = os.path.abspath(os.path.expandvars(fname))
 
-    c = 0
-    guess_tol = 5
-    while not os.path.isfile(fname) and c < guess_tol:
-        error_text = '\nFile {} not found!\nPlease enter param file: '
-        error_text = error_text.format(fname)
+    while not os.path.isfile(fname):
+        error_text = '\nFile %s not found!\n' \
+                     'Please Enter Param file: ' % fname
 
-        fname = os.path.join(path, raw_input(error_text))
+        fname = input(error_text)
         fname = os.path.abspath(os.path.expandvars(fname))
-
-        c += 1
-
-    assert os.path.isfile(fname)
 
     return fname
 
@@ -79,8 +70,8 @@ def _num_to_ext(num):
     else:
         return None
 
-
 ###### This should be in a differnt class
+
 def interp_field(fld, r0, sim_lens):
     r0 = np.array(r0)
     sim_lens = np.array(sim_lens)
@@ -96,9 +87,9 @@ def interp_field(fld, r0, sim_lens):
 
     for w in wl:
         if w < 0.:
-            print 'C'*80
-            print 'Negetive interp weight'
-            print 'C'*80
+            print('C'*80)
+            print('Negetive interp weight')
+            print('C'*80)
 
     if len(np.shape(fld)) == 2:
         return (1.-wl[0])*(1.-wl[1])*fld[lp[0],  lp[1] ]+\

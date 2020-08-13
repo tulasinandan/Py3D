@@ -11,12 +11,11 @@
 import os
 import sys
 import pdb
-import warnings
 import numpy as np
-from dump import Dump
-from _methods import load_param
-from _methods import interp_field
-from _methods import _num_to_ext
+from .dump import Dump
+from ._methods import load_param
+from ._methods import interp_field
+from ._methods import _num_to_ext
 
 class DumpID(object):
     """
@@ -34,18 +33,6 @@ class DumpID(object):
         self.dump = Dump(num, param_file, path)
         self.param = self.dump.param
 
-    def read_fields(self):
-        """ Wrapper for the Dump mehtod read_fields
-        Args: None
-        Returns:
-            dict: dictionary containing E and B fields read from the
-                dump files
-            
-        NOTE: We include this it is common to call only DumpID, when
-            we still need the field values
-        """
-
-        return self.dump.read_fields()
 
     def get_part_in_box(self,
                         r=[1.,1.],
@@ -57,8 +44,8 @@ class DumpID(object):
             widths dx and gets the particle data
         """
 
-        r0  = [1., 1., .5]
-        dx0 = [.5, .5, 1.]
+        r0  = [1., 1., 0.1]
+        dx0 = [.5, .5, self.param['lz']]
 
         for c,(r_i,dx_i) in enumerate(zip(r,dx)):
             r0[c]  = r_i
@@ -70,46 +57,35 @@ class DumpID(object):
             parts = {species:[]}
 
         if par:
-            if self._is_2D():
-                if 'fields' not in self.__dict__:
-                    print 'Reading Fields...'
-                    self.fields = self.read_fields()
-            else:
-                if 'fields' not in self.__dict__:
-                    print 'Reading Fields...'
-                    self.fields = self._get_fld_index_in_zplane(r0[2],dx0[2])
-
-                elif r0[2] - dx0[2]/2. > self.fields['zz'][0] and \
-                     r0[2] + dx0[2]/2. < self.fields['zz'][-1]:
-                    print 'Reading Fields...'
-                    self.fields = self._get_fld_index_in_zplane(r0[2],dx0[2])
+            print('Reading Fields...')
+            self.fields = self.dump.read_fields()
 
         dump_and_index = self._get_procs_in_box(r0[0],dx0[0],
                                                 r0[1],dx0[1],
                                                 r0[2],dx0[2])
 
         for d in dump_and_index:
-            print 'Reading Parts from p3d-{0}.{1}...'.format(d,self.dump.num)
+            print('Reading Parts from p3d-{0}.{1}...'.format(d,self.dump.num))
             data = self.dump.read_particles(d,wanted_procs=dump_and_index[d],
                                             tags=tags)
 
             for sp in parts:
                 parts[sp] += [data[sp][g] for g in dump_and_index[d]]
 
-        #if tags:
-        #    parts = self._combine_parts_and_tags(parts)
+        if tags:
+            parts = self._combine_parts_and_tags(parts)
 
         for sp in parts:
             for c,p in enumerate(parts[sp]):
-                print '  Triming {0} from {1}...'.format(sp,c)
+                print('  Triming {0} from {1}...'.format(sp,c))
                 parts[sp][c] = self._trim_parts(p, r0, dx0)
 
             parts[sp] = np.hstack(parts[sp])
             if par:
                 parts[sp] = self._rotate_parts(parts[sp], r0, dx0)
 
-        if len(parts.keys()) == 1:
-            parts = parts[parts.keys()[0]]
+        if len(list(parts.keys())) == 1:
+            parts = parts[list(parts.keys())[0]]
 
         return parts
 
@@ -119,9 +95,6 @@ class DumpID(object):
             
             There is a small chance that this may be slow!
             So maybe come back and try to fix it? if it needs it
-
-            !!!WARNING!!!: This is now defunct because of changes made in 
-                           the dump.py file. 
         """
         bind_parts = {}
         for sp in parts:
@@ -144,21 +117,15 @@ class DumpID(object):
 
     def _rotate_parts(self, p0, r0, dx0):
         b0,e0 = self._interp_fields(r0)
-        #pdb.set_trace()
 
-        if np.sum(e0**2) < np.spacing(10): 
-            # Some timese there are just no E fields
-            exb = np.cross(b0, np.array([0.,1.,0.]))
-        else:
-            exb = np.cross(b0,e0)
-
+        exb = np.cross(b0,e0)
         exb = exb/np.sqrt(np.sum(exb**2))
 
         bbb = b0/np.sqrt(np.sum(b0**2))
 
         beb = np.cross(bbb,exb)
         
-        ntype = p0.dtype['vx'].type
+        ntype = p0.dtype.descr[3][1] #This is the type of vx
 
         extra_dt = [('v0', ntype),
                     ('v1', ntype),
@@ -168,8 +135,7 @@ class DumpID(object):
 
         p1 = np.zeros(p0.shape,dtype=new_dt)
 
-        #for v in ['x', 'y', 'z', 'vx', 'vy', 'vz']:
-        for v in p0.dtype.fields:
+        for v in ['x', 'y', 'z', 'vx', 'vy', 'vz']:
             p1[v] = p0[v]
        
         for v,ehat in zip(('v0','v1','v2'),(bbb,exb,beb)):
@@ -223,35 +189,6 @@ class DumpID(object):
         else:
             return False 
 
-    def _get_fld_index_in_zplane(self, z0, dz):
-        """ I think they way fields are stored is like this:
-            if you have points in the z direction, every dumpfile has
-            pez*nz/nchannel fields on it.
-            Example: pez = 16, nz = 32, nchannel = 128
-            so p3d-001.00 has z = [0,1,2,3]*dgrid
-               p3d-002.00 has z = [4,5,6,7]*dgrid etc.
-            So all we really want to do is find what z our point
-            corresponds to in index space
-        """
-        zmin = z0 - dz/2.
-        zmax = z0 + dz/2.
-
-        ind_min = self._z_to_index(zmin)
-        ind_max = self._z_to_index(zmax)
-
-        index = range(ind_min,ind_max+1)
-
-        flds = self.dump.read_fields(index) 
-
-        # We need to alter the zz array to accout for this
-        idz = (self.param['pez']*self.param['nz'])/self.param['nchannels']
-        sub_zz_index = []
-        for ind in index:
-            sub_zz_index+= range((ind - 1)*idz,ind*idz)
-        
-        flds['zz'] = flds['zz'][sub_zz_index] 
-
-        return flds
 
     def _get_procs_in_box(self, x0, dx, y0, dy, z0, dz):
         """
@@ -268,6 +205,11 @@ class DumpID(object):
         r0 = np.array([x0,y0,z0])
         dx = np.array([dx,dy,dz])
 
+        procs_needed = [] # The corners of the cube 
+        
+        # find the lower left most proc
+        procs_needed.append(self._r0_to_proc(*(r0 - dx/2.)))
+         
         r0_rng = []
         for c in range(3):
             r0_rng.append(np.arange(r0[c] - dx[c]/2., 
@@ -277,15 +219,14 @@ class DumpID(object):
             if r0_rng[c][-1] < r0[c] + dx[c]/2.:
                 r0_rng[c] = np.hstack((r0_rng[c],r0[c] + dx[c]/2.))
 
+        print(r0_rng)
 
-        #print  'r0_rng = ',r0_rng
         p0_rng = []
         for x in r0_rng[0]:
             for y in r0_rng[1]:
                 for z in r0_rng[2]:
                     p0_rng.append(self._r0_to_proc(x,y,z))
 
-        print  p0_rng
         p0_rng = set(p0_rng) #This removes duplicates
 
         di_dict = {}
@@ -299,35 +240,10 @@ class DumpID(object):
         for k in di_dict:
             di_dict[k].sort()
             di_dict[k] = list(set(di_dict[k]))
-
+            #print k, di_dict[k]
 
         return di_dict
 
-
-    def _z_to_index(self, z0):
-
-        if (self.param['pez']*self.param['nz'])%self.param['nchannels'] != 0:
-            raise NotImplementedError()
-        lz = self.param['lz']
-        dz = lz/1./self.param['pez']/self.param['nz']
-        idz = (self.param['pez']*self.param['nz'])/self.param['nchannels']
-        
-        err_msg = '{0} value {1} is outside of the simulation boundry [0.,{2}].'+\
-                  'Setting {0} = {3}'
-
-        if self._is_2D():
-            ind = 1
-        else:
-            if z0 < 0.:
-                print err_msg.format('Z',z0,lz,0.)
-                ind = 1
-            elif z0 >= lz:
-                print err_msg.format('Z',z0,lz,lz)
-                ind = self.param['nchannels']
-            else:
-                ind = (int(np.floor(z0/dz)))//idz + 1
-
-        return ind
 
     def _r0_to_proc(self, x0, y0, z0):
         """ Returns the px,py,pz processeor for a given values of x, y, and z
@@ -341,19 +257,19 @@ class DumpID(object):
                   'Setting {0} = {3}'
 
         if x0 < 0.:
-            print err_msg.format('X',x0,lx,0.)
+            print(err_msg.format('X',x0,lx,0.))
             px = 1
-        elif x0 > lx:
-            print err_msg.format('X',x0,lx,lx)
+        elif x0 >= lx:
+            print(err_msg.format('X',x0,lx,lx))
             px = self.param['pex']
         else:
             px = int(np.floor(x0/self.param['lx']*self.param['pex'])) + 1
 
         if y0 < 0.:
-            print err_msg.format('Y',y0,ly,0.)
+            print(err_msg.format('Y',y0,ly,0.))
             py = 1
-        elif y0 > ly:
-            print err_msg.format('Y',y0,ly,ly)
+        elif y0 >= ly:
+            print(err_msg.format('Y',y0,ly,ly))
             py = self.param['pey']
         else:
             py = int(np.floor(y0/self.param['ly']*self.param['pey'])) + 1
@@ -362,10 +278,10 @@ class DumpID(object):
             pz = 1
         else:
             if z0 < 0.:
-                print err_msg.format('Z',z0,lz,0.)
+                print(err_msg.format('Z',z0,lz,0.))
                 pz = 1
-            elif z0 > lz:
-                print err_msg.format('Z',z0,lz,lz)
+            elif z0 >= lz:
+                print(err_msg.format('Z',z0,lz,lz))
                 pz = self.param['pez']
             else:
                 pz = int(np.floor(z0/self.param['lz']*self.param['pez'])) + 1
@@ -396,19 +312,17 @@ class DumpID(object):
 
         dump_IO_version = 'V1'
 
-        if self.param.has_key('USE_IO_V2'):
-            warn_msg = 'USE_IO_V2 Not properly coded at this time!'\
-                       'Use at your own risk!'
+        if 'USE_IO_V2' in self.param:
             dump_IO_version = 'V2'
-            warnings.warn(warn_msg)
        
         if dump_IO_version == 'V1':
-            #print 'Using IO V1...'
+            print('Using IO V1...')
             N = (px - 1)%nch + 1
             R = (pz - 1)*(pex/nch)*(pey) + (pex/nch)*(py - 1) + (px - 1)/nch
 
         else: # dump_IO_version == 'V2'
-            #print 'Using IO V2...'
+            print('Using IO V2...')
+
             npes_per_dump = pex*pey*pez/nch
 
             pe = (pz - 1)*pex*pey + (py - 1)*pex + (px - 1)
